@@ -1,0 +1,85 @@
+# 导入必要的库
+import requests
+from bs4 import BeautifulSoup
+import pymysql.cursors
+
+# 配置数据库连接
+connection = pymysql.connect(
+    host="localhost",
+    user="root",
+    password="123456",
+    database="spider_douban01",
+    cursorclass=pymysql.cursors.DictCursor
+)
+
+# 设置请求头，以模拟浏览器访问
+headers = {
+
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 "
+                  "Safari/537.36 Edg/128.0.0.0"
+}
+
+# 设置代理，以处理网络请求的中转
+proxies = {
+    "http": "http://127.0.0.1:7890",
+    "https": "http://127.0.0.1:7890",
+}
+
+# 设置豆瓣电影Top250的基础URL
+base_url = "https://movie.douban.com/top250"
+
+# 获取用户输入的爬取页数
+num = int(input("请输入要爬取的页数："))
+
+# 开始数据库会话
+with connection:
+    # 遍历每一页
+    for i in range(num):
+        # 构造每一页的完整URL
+        url = f"{base_url}?start={i * 25}"
+        # 发送HTTP请求
+        response = requests.get(url, headers=headers, proxies=proxies)
+        # 解析HTML响应
+        soup = BeautifulSoup(response.text, "html.parser")
+        # 获取所有的电影条目
+        items = soup.find_all("div", class_="item")
+
+        # 遍历每一个电影条目
+        for item in items:
+            # 获取电影排名、名称和图片URL
+            pic_div = item.find("div", class_="pic")
+            top = pic_div.em.string
+            img = pic_div.a.img
+            name = img["alt"]
+            url = img["src"]
+            # 获取中文名和英文名
+            piv_hd = item.find("div", class_="hd")
+            china_name = piv_hd.find("span", class_="title").string
+            English = piv_hd.find_all('span')[1].get_text().split("/")[1]
+            # 获取导演和主演信息
+            actor = item.find("p").get_text().split("\n")[1].split("\xa0")[0].replace("\n", "").replace(" ", "")
+            actor_zhu = item.find("p").get_text().split("\n")[1].split("\xa0")[-1].replace("\n", "").replace(" ", "") if \
+            item.find("p").get_text().split("\n")[1].split("\xa0")[-1].replace("\n", "").replace(" ", "") else "暂时还无该数据"
+            # 获取国家/地区信息
+            guo = item.p.get_text().split('/')[-2]
+            # 获取上映时间和类型
+            time = item.find("p").get_text().split("\n")[2].split("/")[0].replace("\n", "").replace(" ", "")
+            type = item.p.get_text().split('\n')[2].split('/')[-1]
+            # 获取评分和评价人数
+            pingfen = item.find("div", class_="star").get_text().split('\n')[2]
+            pingfen_num = item.find("div", class_="star").get_text().split('\n')[4]
+            # 获取简介
+            que = item.find("p", class_="quote").get_text().replace("\n", "") if item.find("p",
+                                                                                       class_="quote") else "暂时还无简介"
+
+            # 打印爬取的数据
+            print(top, name, url, china_name, English, guo, time, actor, actor_zhu, type, pingfen, pingfen_num, que)
+
+            # 插入数据到数据库
+            with connection.cursor() as cursor:
+                sql = "INSERT INTO douban1(playbill,address,Chinese,name,sobriquet,Place,Director,actress,past,type,score,xzj) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                cursor.execute(sql, (
+                name, url, china_name, English, guo, actor, actor_zhu, time, type, pingfen, pingfen_num, que))
+
+        # 提交数据库事务
+        connection.commit()
